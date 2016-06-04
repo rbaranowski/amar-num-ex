@@ -1,63 +1,90 @@
-require(mzar)
 require(wbs)
 require(MASS)
+
+my.arima.sim <- function (model, n, rand.gen = rnorm, innov = rand.gen(n, ...), 
+          n.start = NA, start.innov = rand.gen(n.start, ...), ...) 
+{
+  if (!is.list(model)) 
+    stop("'model' must be list")
+  if (n <= 0L) 
+    stop("'n' must be strictly positive")
+  p <- length(model$ar)
+#   if (p) {
+#     minroots <- min(Mod(polyroot(c(1, -model$ar))))
+#     if (minroots <= 1) 
+#       stop("'ar' part of model is not stationary")
+#   }
+  q <- length(model$ma)
+  if (is.na(n.start)) 
+    n.start <- p + q + 2*p
+  if (n.start < p + q) 
+    stop("burn-in 'n.start' must be as long as 'ar + ma'")
+  d <- 0
+  if (!is.null(ord <- model$order)) {
+    if (length(ord) != 3L) 
+      stop("'model$order' must be of length 3")
+    if (p != ord[1L]) 
+      stop("inconsistent specification of 'ar' order")
+    if (q != ord[3L]) 
+      stop("inconsistent specification of 'ma' order")
+    d <- ord[2L]
+    if (d != round(d) || d < 0) 
+      stop("number of differences must be a positive integer")
+  }
+  if (!missing(start.innov) && length(start.innov) < n.start) 
+    stop(sprintf(ngettext(n.start, "'start.innov' is too short: need %d point", 
+                          "'start.innov' is too short: need %d points"), n.start), 
+         domain = NA)
+  x <- ts(c(start.innov[seq_len(n.start)], innov[1L:n]), start = 1 - 
+            n.start)
+  if (length(model$ma)) {
+    x <- filter(x, c(1, model$ma), sides = 1L)
+    x[seq_along(model$ma)] <- 0
+  }
+  if (length(model$ar)) 
+    x <- filter(x, model$ar, method = "recursive")
+  if (n.start > 0) 
+    x <- x[-(seq_len(n.start))]
+  if (d > 0) 
+    x <- diffinv(x, differences = d)
+  as.ts(x)
+}
 ### simulate a large mzar process ####
-p <- 480
-n <- 5500
-alpha <-c(.04664633, 1.13961563,  -0.62686037) 
-tau <- c(1,  148, 364)
 
-beta <- rep(0,p)
-for(j in 1:length(tau)) beta[1:tau[j]] <- beta[1:tau[j]] + alpha[j]/tau[j]
+n <- 50000
+p <- 1000
 
-ts.plot(beta)
+# alpha <-c(-0.115,-2.15, -15, 20) 
+# tau <- as.integer(c(1,   20*log(n), 10 * log(n)^2, 20 * log(n)^2))
+
+alpha <-c(-0.115, -2.15, -15, 10) 
+tau <- as.integer(c(1, 20*log(n), 10 * log(n)^2, 20 * log(n)^2))
+
+# tau <- c(1, 5, 8)
+
+
+
 
 ############
 
-returns <- arima.sim(n = n, list(ar = beta))
+returns <- mzar.sim(n+max(tau), alpha, tau)
+plot(returns)
 
-ts.plot(returns)
 acf(returns)
 acf(abs(returns))
 
+#mzar fit
 
-### try to estimate this model
-
-X <- ARDesign(returns, p)
-y <- ARResponse(returns, p)
+tmp <- mzar.fit(returns, tau)
 
 
-
-### ols estimates
-beta.ols <- coef(lm(y~0+X))
-ts.plot(beta.ols)
-w <- wbs(beta.ols)
-w$res[order(w$res[,5], decreasing=TRUE)[1:length(alpha)],3]
+# detach("package:wbs", unload=TRUE)
+require(wbs)
 
 
-
-### ridge estimates
-beta.ridge <- coef(lm.ridge(y~0+X, lambda = n))
-ts.plot(beta.ridge)
-lines(beta)
-w <- wbs(beta.ridge)
-w$res[order(w$res[,5], decreasing=TRUE)[1:(length(alpha))],3]
+test <- mzar(returns, 2500, method="bic")
+test$scales
 tau
 
-
-### splines estimates
-D <- diag(p)
-for(j in 2:p) D[j,j-1] <- -1
-lambda <- nrow(X) 
-
-
-
-beta.splines <- solve(t(X)%*%X + lambda * t(D)%*%D) %*% t(X) %*% y
-ts.plot(beta.splines)
-lines(beta)
-w <- wbs(beta.splines)
-w$res[order(w$res[,5], decreasing=TRUE)[1:(length(alpha))],3] 
-tau
-
-
+plot(test$ic)
 
